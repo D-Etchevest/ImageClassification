@@ -19,16 +19,41 @@ In order to understand the structure of this repository, please read following i
 
 In this folder there are old scripts, which are not used anymore.
 
-### xxx
+### 01_Data
+
+In this folder the data is hosted. First, we took a subset of the data. The complete data is available at https://storage.googleapis.com/openimages/web/download.html
+
+The complete dataset is split into 16 smaller files, so that the data in this folder represents the segmentations of folder "0".
+
+### 02_Code
+
+In this folder you find the code for the four models, including transforming the data into train and test.
+
+### 03_Presentation
+
+In this folder you find the final presentation for presenting the results of this project.
 
 ## Prerequisites
 
 Install in R following packages / libraries:
- - 
-
-## Database
-
-In order to connect with the database, which is hosted on aws, please connect via R in the final R scripts. 
+ - tidyverse
+ - lubridate
+ - rockchalk
+ - e1071
+ - ROCR
+ - caTools
+ - party
+ - knitr
+ - rmarkdown
+ - RMySQL
+ - DBI
+ - dplyr
+ - readr
+ - randomForest
+ - neuralnet
+ - kernlab
+BiocManager::install(pkgs = "EBImage")
+library(EBImage)
 
 ## Built With
 
@@ -39,7 +64,6 @@ RStudio as an environment (https://rstudio.com)
 
 Max Franke & 
 Damian Etchevest
-
 
 ## License
 
