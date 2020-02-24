@@ -1,0 +1,550 @@
+---
+title: "Final Project: Image Classification"
+author: "Damian Etchevest, Franke, Max"
+output: html_notebook
+---
+Course: CIS-544 DATA MINING & MACHINE LRNG
+
+Term: SpringT1
+
+Last modified date: 02/24/2020
+
+
+# Image classification, is it a car?  {.tabset .tabset-fade .tabset-pills}
+## Workspace preparation
+### Approach
+***
+In this section the workspace will be prepared. This means that first the global environment will be cleaned, and all required packages will be loaded. The data should hosted in a bucket in the aws Cloud and is loaded into R via a SQL connection. The data should transformed into R accordingly (ELT). Because of connection errors, first the models are trained with a subset of the data.
+
+***
+### Clean Workspace
+```{r}
+rm(list = ls())
+```
+
+### Install libraries
+```{r}
+#install.packages("tidyverse")
+#install.packages("lubridate")
+#install.packages("rockchalk")
+#install.packages("corrplot")
+#install.packages("ggcorrplot")
+#install.packages("e1071")
+#install.packages("ROCR")
+#install.packages("rpart")
+#install.packages("rpart.plot")
+#install.packages("caTools")
+#install.packages("party")
+#install.packages("knitr")
+#install.packages("rmarkdown")
+#install.packages("forecast")
+#install.packages("RMySQL")
+#install.packages("DBI")
+#install.packages("dplyr")
+```
+
+### Load Packages
+```{r}
+library(tidyverse)
+library(lubridate)
+library(rockchalk)
+library(zoo)
+library(corrplot)
+library(e1071)
+library(ROCR)
+library(rpart)
+library(rpart.plot)
+library(caTools)
+library(party)
+library(knitr)
+library(rmarkdown)
+library(forecast)
+library(RMySQL)
+library(DBI)
+library(dplyr)
+library(readr)
+library(randomForest)
+library(neuralnet)
+library(kernlab)
+
+#BiocManager::install(pkgs = "EBImage")
+library(EBImage)
+```
+### Establish Connection to data
+```{r}
+# Classes
+class_descriptions_boxable <- read_csv("https://storage.googleapis.com/openimages/v5/class-descriptions-boxable.csv", col_names = FALSE)
+colnames(class_descriptions_boxable) <- c("ID", "class")
+# Segments
+classes_segmentation <- read_csv("https://storage.googleapis.com/openimages/v5/classes-segmentation.txt", col_names = FALSE)
+colnames(classes_segmentation) <- "ID"
+# Transform data to csv
+write_csv(class_descriptions_boxable, "test1.csv")
+write_csv(classes_segmentation, "test2.csv")
+
+# Output the transformed csv
+classes_segmentation <- read_csv("~/Desktop/test2_changed.csv")
+
+# Load the annotations
+train_annotations_object_segmentation <- read_csv("https://storage.googleapis.com/openimages/v5/train-annotations-object-segmentation.csv")
+head(train_annotations_object_segmentation)
+```
+
+### Transforming the images
+```{r}
+# set wd
+setwd("/Users/MaxFranke/Desktop/05_Big Data Analytics/04_Classes/03 SP:Term1/CIS-544 DATA MINING & MACHINE LRNG/06_Final_Project/ImageClassification/ImageClassification/01_Data/")
+
+# Storing the files
+files <- list.files(path = "train-masks-0")
+head(files)
+```
+
+### Create dataframe with all Pixels, ImageID's, LabelNames, and class
+```{r}
+result <- data.frame(matrix(nrow = 0, ncol = 103))
+colnames(result) <- c(paste("Pixel", seq(1:100)),"ImageID", "LabelName", "class")
+for (image in 1:length(files)) {
+  img <- readImage(file.path(paste("train-masks-0/",files[image], sep = "")))
+  ## Resize image
+img_resized <- resize(img, w = 10, h = 10)
+## Set to grayscale
+grayimg <- channel(img_resized, "gray")
+## Get the image as a matrix
+img_matrix <- grayimg@.Data
+## Coerce to a dataframe
+img_dataframe <- data.frame(Pixels = as.vector(t(img_matrix)))
+## Rows to columns
+pixels <- data.frame(matrix(nrow = 1, ncol = 100))
+colnames(pixels) <- paste("Pixel", seq(1:100))
+# Transform one column to multiple columns
+for (i in 1:nrow(img_dataframe)) {
+  pixels[1,i] <- img_dataframe[i,1]
+}
+pixels$ImageID <- as.character(subset(train_annotations_object_segmentation, MaskPath == files[image], select = ImageID))
+pixels$LabelName <- as.character(subset(train_annotations_object_segmentation, MaskPath == files[image], select = LabelName))
+pixels$class <- as.character(subset(classes_segmentation, ID == as.character(subset(train_annotations_object_segmentation, MaskPath == files[image], select = LabelName)), select = class))
+
+result <- rbind(result, pixels)
+
+}
+result <- result[,c(103,102,101, 1:100)]
+```
+
+## Model Building & Prediction
+### Approach
+***
+In this section the models are build to answer if the picture is a Car. So, we want to predict if a picture from the data is a "Car" or not?
+The following models are built:
+
+1. Naïve Bayes
+
+2. Random Forest
+
+3. Deep Learning
+
+4. Support Vector Machines
+
+Finally, the models are predicted in conjunction with the test data set.
+
+***
+
+### Transform dataset
+```{r}
+# We want to predict if the class == "Car" or not
+images <- subset(result[,c(4:103)])
+images$class <- if_else(result$class == "Car", 1, 0)
+images <- images[,c(101, 1:100)]
+
+# Save as factor
+names(images) <- make.names(names(images))
+images$class <- as.factor(images$class)
+head(images)
+```
+
+### Create training and test data
+```{r}
+require(caTools)
+
+# Set the random seed for repeatability
+set.seed(123)
+
+# Split the data into Ratio 3:1
+sample <- sample.split(images$class, SplitRatio = .75)
+train <- subset(images, sample == TRUE)
+test <- subset(images, sample == FALSE)
+
+# Data sets with all independent variables for training the dependent variable "Revenue"
+train_x <- train[,-which(names(train) %in% "class")]
+train_y <- factor(train$class)
+
+# Data sets with all independent variables for test the dependent variable "Revenue"
+test_x <- test[,-which(names(test) %in% "class")]
+test_y <- factor(test$class)
+```
+***
+
+### Naive Bayes
+```{r}
+nb_model <- naiveBayes(class ~ ., data = train, laplace = 5)
+nb_model
+```
+
+### Random Forest
+```{r}
+# Rf model
+rf_model <-  randomForest(class ~ ., data = train, method = "class")
+rf_model
+```
+
+### Deep Learning (neuralnet)
+
+```{r}
+nn_model <- neuralnet(formula = class ~ ., data = train)
+plot(nn_model)
+```
+
+### Support Vector Machine
+
+```{r}
+svm_model <- ksvm(class ~ ., data = train, kernel = "vanilladot", prob.model = TRUE)
+svm_model
+```
+
+### Prediction
+```{r}
+pred_test_nb <- predict(nb_model, newdata = test, type = "class")
+pred_test_rf <- predict(rf_model, newdata = test, type = "class")
+pred_test_nn <- compute(nn_model, test[2:101])$net.result
+pred_test_nn <- pred_test_nn[,2]
+pred_test_svm <- predict(svm_model, newdata = test)
+
+```
+
+### Summary
+***
+
+In naive bayes model, laplace is 5 to reduce the effect of unavailable records in the train set.
+
+The random forest model makes 500 number of trees in the building process.
+
+The deep learning neural net shows the weights and output layer.
+
+The support vector machine works with the kernel "vanilladot"
+
+***
+
+
+## Performance Measurement
+### Approach
+***
+In this section the models are evaluated according two criteria Accuracy & AUC values, whereby the decision for the best model is made on the basis of Accuracy.
+In order to calculate the accuracy, the confusion matrixes are first established, whereby the predictions still have to be transformed with regard to the "nerual net" model into "1" and "0". Using the elements of the confusion matrix (TP,TN,FP,FN) and the other results (Actual and Prediction data frame), the accuracy is calculated and presented. Finally, it is examined whether there is a significant difference between the models with regard to accuracy. 
+
+***
+
+### Confusion matrix
+```{r}
+# Confusion Matrix [neural net shows probabilities and is not useful to be displayed now]
+nb_confusion_matrix <- table(test$class, pred_test_nb, dnn = c("Actual", "Prediction"))
+rf_confusion_matrix <- table(test$class, pred_test_rf, dnn = c("Actual", "Prediction"))
+#nn_confusion_matrix <- table(test$class, pred_test_nn, dnn = c("Actual", "Prediction"))
+svm_confusion_matrix <- table(test$class, pred_test_svm, dnn = c("Actual", "Prediction"))
+
+# Print
+print(nb_confusion_matrix)
+print(rf_confusion_matrix)
+#print(nn_confusion_matrix)
+print(svm_confusion_matrix)
+```
+### Output results
+```{r}
+
+nb_results <- data.frame(Actual = test$class,
+                          Prediction = pred_test_nb)
+
+rf_results <- data.frame(Actual = test$class,
+                          Prediction = pred_test_rf)
+
+nn_results <- data.frame(Actual = test$class,
+                          Prediction = pred_test_nn)
+svm_results <- data.frame(Actual = test$class,
+                          Prediction = pred_test_svm)
+print(nb_results)
+print(rf_results)
+print(nn_results)
+print(svm_results)
+```
+### Transform Prediction for neural net
+```{r}
+nn_results$Prediction <- if_else(nn_results$Prediction > 0.5, 1, 0)
+nn_results
+```
+### Accuracy calculation
+
+#### Naive Bayes
+```{r}
+# Elements of confusion matrix
+TP <- nb_confusion_matrix[2,2]
+TN <- nb_confusion_matrix[1,1]
+FN <- nb_confusion_matrix[1,2]
+FP <- nb_confusion_matrix[2,1]
+# Calculate accuracy, precision, recall
+nb_accuracy <- (TP+TN)/sum(TP, TN, FN, FP)
+nb_precision <- (TP)/(TP+FP)
+nb_recall <- (TP)/(TP+FN)
+# Output results
+cat("Accuracy for Naive Bayes is: ", nb_accuracy, "\n")
+cat("Precision for Naive Bayes is: ", nb_precision, "\n")
+cat("Recall for Naive Bayes is: ", nb_recall, "\n")
+
+# Save Accuracy for Naive Bayes
+nb_TP <- if_else(nb_results$Actual == nb_results$Prediction, 1, 0)
+nb_TP <- as.data.frame(nb_TP)
+nb_TP$Model <- "Naive Bayes"
+names(nb_TP)[1] <- "Accuracy"
+```
+
+#### Random Forest
+```{r}
+# Elements of confusion matrix
+TP <- rf_confusion_matrix[2,2]
+TN <- rf_confusion_matrix[1,1]
+FN <- rf_confusion_matrix[1,2]
+FP <- rf_confusion_matrix[2,1]
+# Calculate accuracy, precision, recall
+rf_accuracy <- (TP+TN)/sum(TP, TN, FN, FP)
+rf_precision <- (TP)/(TP+FP)
+rf_recall <- (TP)/(TP+FN)
+# Output results
+cat("Accuracy for random forest is: ", rf_accuracy, "\n")
+cat("Precision for random forest is: ", rf_precision, "\n")
+cat("Recall for random forest is: ", rf_recall, "\n")
+
+# Save Accuracy for random forest
+rf_TP <- if_else(rf_results$Actual == rf_results$Prediction, 1, 0)
+rf_TP <- as.data.frame(rf_TP)
+rf_TP$Model <- "Random Forest"
+names(rf_TP)[1] <- "Accuracy"
+```
+#### Neural net
+```{r}
+# Elements of confusion matrix
+TP <- nn_confusion_matrix[2,2]
+TN <- nn_confusion_matrix[1,1]
+FN <- nn_confusion_matrix[1,2]
+FP <- nn_confusion_matrix[2,1]
+# Calculate accuracy, precision, recall
+nn_accuracy <- (TP+TN)/sum(TP, TN, FN, FP)
+nn_precision <- (TP)/(TP+FP)
+nn_recall <- (TP)/(TP+FN)
+# Output results
+cat("Accuracy for neural net is: ", nn_accuracy, "\n")
+cat("Precision for neural net is: ", nn_precision, "\n")
+cat("Recall for neural net is: ", nn_recall, "\n")
+
+# Save Accuracy for Neural net
+nn_TP <- if_else(nn_results$Actual == nn_results$Prediction, 1, 0)
+nn_TP <- as.data.frame(nn_TP)
+nn_TP$Model <- "Neural Net"
+names(nn_TP)[1] <- "Accuracy"
+```
+#### Support Vector Machine
+```{r}
+# Elements of confusion matrix
+TP <- svm_confusion_matrix[2,2]
+TN <- svm_confusion_matrix[1,1]
+FN <- svm_confusion_matrix[1,2]
+FP <- svm_confusion_matrix[2,1]
+# Calculate accuracy, precision, recall
+svm_accuracy <- (TP+TN)/sum(TP, TN, FN, FP)
+svm_precision <- (TP)/(TP+FP)
+svm_recall <- (TP)/(TP+FN)
+# Output results
+cat("Accuracy for support vector machine is: ", svm_accuracy, "\n")
+cat("Precision for support vector machine is: ", svm_precision, "\n")
+cat("Recall for support vector machine is: ", svm_recall, "\n")
+
+# Save Accuracy for Support Vector Machine
+svm_TP <- if_else(svm_results$Actual == svm_results$Prediction, 1, 0)
+svm_TP <- as.data.frame(svm_TP)
+svm_TP$Model <- "Support Vector Machine"
+names(svm_TP)[1] <- "Accuracy"
+```
+
+***
+### Accuracy comparison
+```{r}
+compare <- data.frame(Method = c("01-Naive Bayes", "02-Random Forest", "03-Neural Net", "04-Support Vector Machine"),
+                      Accuracy = c(nb_accuracy, rf_accuracy, nn_accuracy, svm_accuracy))
+compare
+ggplot(data = compare, mapping = aes(x = Method, y = Accuracy)) +
+  geom_col() +
+  geom_text(aes(label = round(Accuracy, 4)), position = position_stack(vjust = 0.5), col = "white") +
+  labs(title = "Accuracy comparison between different models")
+  
+TruePositive <- rbind(nb_TP, rf_TP, nn_TP, svm_TP)
+TruePositive <- as.data.frame(TruePositive)
+TruePositive$Model <- as.factor(TruePositive$Model)
+aov <- aov(Accuracy ~ Model, data = TruePositive)
+summary(aov)
+TukeyHSD(aov)
+```
+### Print out the significant differences
+```{r}
+# Safe Tukey test
+Tukey <- TukeyHSD(aov)
+Tukey <- as.data.frame(Tukey$Model)
+# Print results
+cat("P-Value Neural Net - Naive Bayes: ", Tukey$`p adj`[1],", reject H0 - sig. difference.", "\n")
+cat("P-Value Random Forest-Naive Bayes: ", Tukey$`p adj`[2],", reject H0 - sig. difference.", "\n")
+cat("P-Value Support Vector Machine-Naive Bayes: ", Tukey$`p adj`[3],", reject H0 - sig. difference.", "\n")
+cat("P-Value Random Forest-Neural Net: ", Tukey$`p adj`[4],", fail to reject H0, no sig. differnce.", "\n")
+cat("P-Value Support Vector Machine-Neural Net : ", Tukey$`p adj`[5],", fail to reject H0, no sig. differnce.", "\n")
+cat("P-Value Support Vector Machine-Random Forest: ", Tukey$`p adj`[6],", fail to reject H0, no sig. differnce.")
+```
+
+
+### Summary
+***
+The best fitted model is support vector machine concerning anova, there is significant difference between the models concerning accuracy (H0: means of the accuracy values are equal between the models) --> p-value = <2e-16 < 0.05, reject H0.
+With the Tukey test, it is proved that e.g. between support vector machine and random forest, there is no significant difference in the accuracy.
+
+***
+
+## Performance Measurement - Overfitting check
+### Summary
+***
+In this section, we want to check, if the models overfits?
+The package ROCR is used to calculate the AUC values and ROC curves. Therefore, a prediction obejct is first created that brings the input data into a standardized form. Then ROC and AUC are determined and plotted with the ROC curves of all models with corresponding AUC values. Finally, the extent to which the training vs. test ROC and AUC values differ is examined with regard to overfitting. 
+
+***
+
+
+### Prediction with probalities
+```{r}
+library(ROCR)
+pred_test_nb <- predict(nb_model, newdata = test_x, type = "raw")
+pred_test_rf <- predict(rf_model, newdata = test_x, type = "prob")
+pred_test_nn <- predict(nn_model, newdata = test_x, type = "prob")
+pred_test_svm <- predict(svm_model, newdata = test_x, type = "prob")
+```
+### Creating a prediction object (transform input data into a standardized format)
+```{r}
+prediction_test_nb <- ROCR::prediction(pred_test_nb[,2], labels = test$class)
+prediction_test_rf <- ROCR::prediction(pred_test_rf[,2], labels = test$class)
+prediction_test_nn <- ROCR::prediction(pred_test_nn[,2], labels = test$class)
+prediction_test_svm <- ROCR::prediction(pred_test_svm[,2], labels = test$class)
+```
+***
+### ROC & AUC
+#### Calculate ROC
+```{r}
+roc_test_nb <- performance(prediction_test_nb, measure = "tpr", x.measure = "fpr")
+roc_test_rf <- performance(prediction_test_rf, measure = "tpr", x.measure = "fpr")
+roc_test_nn <- performance(prediction_test_nn, measure = "tpr", x.measure = "fpr")
+roc_test_svm <- performance(prediction_test_svm, measure = "tpr", x.measure = "fpr")
+```
+#### Calculate AUC
+```{r}
+auc_test_nb <- performance(prediction_test_nb, measure = "auc")
+auc_test_rf <- performance(prediction_test_rf, measure = "auc")
+auc_test_nn <- performance(prediction_test_nn, measure = "auc")
+auc_test_svm <- performance(prediction_test_svm, measure = "auc")
+```
+#### Output of AUC values rounded depending on model 
+```{r}
+auc_test_nb <- round(auc_test_nb@y.values[[1]], 4)
+auc_test_rf <- round(auc_test_rf@y.values[[1]], 4)
+auc_test_nn <- round(auc_test_nn@y.values[[1]], 4)
+auc_test_svm <- round(auc_test_svm@y.values[[1]], 4)
+```
+#### Plot of all ROC curves with corresponding AUC values for visual comparison
+```{r}
+plot(roc_test_svm, main = "All ROC curves")
+plot(roc_test_nb, add = TRUE, col = "red")
+plot(roc_test_nn, add = TRUE, col = "darkgreen")
+plot(roc_test_rf, add = TRUE, col = "blue")
+abline(0,1, col = "grey", lty = 2)
+legend("bottomright", legend = c(paste0("Support Vector Machine (AUC = ", auc_test_svm, ")"),
+                                 paste0("Naive Bayes (AUC = ", auc_test_nb, ")"),
+                                 paste0("Neural Net (AUC = ", auc_test_nn, ")"),
+                                 paste0("Random Forest (AUC = ", auc_test_rf, ")")),
+       col = c("black","red","darkgreen","blue"), lty = c(1,1,1,1))
+```
+***
+### Plot Test-AUC vs Train-AUC
+#### Naive Bayes Test vs Train ROC & AUC
+```{r}
+# Calculate values for train
+pred_train_nb <- predict(nb_model, newdata = train, type = "raw")
+prediction_train_nb <- ROCR::prediction(pred_train_nb[,2], labels = train$class)
+roc_train_nb <- performance(prediction_train_nb, measure="tpr", x.measure="fpr")
+auc_train_nb <- performance(prediction_train_nb, measure="auc")
+auc_train_nb <- round(auc_train_nb@y.values[[1]], 4)
+# Plot
+plot(roc_train_nb, main = "Naive Bayes: Train-ROC vs Test-ROC")
+plot(roc_test_nb, add = TRUE, col = "red")
+abline(0,1, col = "grey", lty = 2)
+legend("bottomright", legend = c(paste0("Naive Bayes Train (AUC = ", auc_train_nb, ")"),
+                                 paste0("Naive Bayes Test (AUC = ", auc_test_nb, ")")),
+       col = c("black", "red"), lty = c(1,1))
+```
+#### Random Forest Test vs Train ROC & AUC
+```{r}
+# Calculate values for train
+pred_train_rf <- predict(rf_model, newdata = train, type = "prob")
+prediction_train_rf <- ROCR::prediction(pred_train_rf[,2], labels = train$class)
+roc_train_rf <- performance(prediction_train_rf, measure="tpr", x.measure="fpr")
+auc_train_rf <- performance(prediction_train_rf, measure="auc")
+auc_train_rf <- round(auc_train_rf@y.values[[1]], 4)
+# Plot
+plot(roc_train_rf, main = "Random Forest: Train-ROC vs Test-ROC")
+plot(roc_test_rf, add = TRUE, col = "red")
+abline(0,1, col = "grey", lty = 2)
+legend("bottomright", legend = c(paste0("Random Forest Train (AUC = ", auc_train_rf, ")"),
+                                 paste0("Random Forest Test (AUC = ", auc_test_rf, ")")),
+       col = c("black", "red"), lty = c(1,1))
+```
+#### Neural Net Test vs Train ROC & AUC
+```{r}
+# Calculate values for train
+pred_train_nn <- predict(nn_model, newdata = train, type = "prob")
+prediction_train_nn <- ROCR::prediction(pred_train_nn[,2], labels = train$class)
+roc_train_nn <- performance(prediction_train_nn, measure="tpr", x.measure="fpr")
+auc_train_nn <- performance(prediction_train_nn, measure="auc")
+auc_train_nn <- round(auc_train_nn@y.values[[1]], 4)
+# Plot
+plot(roc_train_nn, main = "Neural Net: Train-ROC vs Test-ROC")
+plot(roc_test_nn, add = TRUE, col = "red")
+abline(0,1, col = "grey", lty = 2)
+legend("bottomright", legend = c(paste0("Neural Net Train (AUC = ", auc_train_nn, ")"),
+                                 paste0("Neural Net Test (AUC = ", auc_test_nn, ")")),
+       col = c("black", "red"), lty = c(1,1))
+```
+
+#### Support Vector Machine Test vs Train ROC & AUC
+```{r}
+# Calculate values for train
+pred_train_svm <- predict(svm_model, newdata = train, type = "prob")
+prediction_train_svm <- ROCR::prediction(pred_train_svm[,2], labels = train$class)
+roc_train_svm <- performance(prediction_train_svm, measure="tpr", x.measure="fpr")
+auc_train_svm <- performance(prediction_train_svm, measure="auc")
+auc_train_svm <- round(auc_train_svm@y.values[[1]], 4)
+# Plot
+plot(roc_train_svm, main = "Neural Net: Train-ROC vs Test-ROC")
+plot(roc_test_svm, add = TRUE, col = "red")
+abline(0,1, col = "grey", lty = 2)
+legend("bottomright", legend = c(paste0("Neural Net Train (AUC = ", auc_train_svm, ")"),
+                                 paste0("Neural Net Test (AUC = ", auc_test_svm, ")")),
+       col = c("black", "red"), lty = c(1,1))
+```
+
+
+
+### Summary
+***
+For the model random forest the roc-curve between train and test is wide apart, which is a sign for overfitting. Also, neural net shows some signs for overfitting.
+
+***
+
