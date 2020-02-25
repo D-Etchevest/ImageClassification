@@ -53,11 +53,13 @@ Install in R following packages / libraries:
  - neuralnet
  - kernlab
 BiocManager::install(pkgs = "EBImage")
-library(EBImage)
+ - EBImage
 
 ## Built With
 
 R (https://www.r-project.org)
+
+
 RStudio as an environment (https://rstudio.com)
 
 ## Authors
