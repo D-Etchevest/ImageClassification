@@ -75,15 +75,6 @@ library(EBImage)
 # Classes
 class_descriptions_boxable <- read_csv("https://storage.googleapis.com/openimages/v5/class-descriptions-boxable.csv", col_names = FALSE)
 colnames(class_descriptions_boxable) <- c("ID", "class")
-# Segments
-classes_segmentation <- read_csv("https://storage.googleapis.com/openimages/v5/classes-segmentation.txt", col_names = FALSE)
-colnames(classes_segmentation) <- "ID"
-# Transform data to csv
-write_csv(class_descriptions_boxable, "test1.csv")
-write_csv(classes_segmentation, "test2.csv")
-
-# Output the transformed csv
-classes_segmentation <- read_csv("~/Desktop/test2_changed.csv")
 
 # Load the annotations
 train_annotations_object_segmentation <- read_csv("https://storage.googleapis.com/openimages/v5/train-annotations-object-segmentation.csv")
@@ -105,7 +96,7 @@ head(files)
 result <- data.frame(matrix(nrow = 0, ncol = 103))
 colnames(result) <- c(paste("Pixel", seq(1:100)),"ImageID", "LabelName", "class")
 for (image in 1:length(files)) {
-  img <- readImage(file.path(paste("train-masks-0/",files[image], sep = "")))
+  img <- readImage(file.path(paste("/Users/MaxFranke/Desktop/05_Big Data Analytics/04_Classes/03 SP:Term1/CIS-544 DATA MINING & MACHINE LRNG/06_Final_Project/ImageClassification/ImageClassification/01_Data/train-masks-0/",files[image], sep = "")))
   ## Resize image
 img_resized <- resize(img, w = 10, h = 10)
 ## Set to grayscale
@@ -123,7 +114,7 @@ for (i in 1:nrow(img_dataframe)) {
 }
 pixels$ImageID <- as.character(subset(train_annotations_object_segmentation, MaskPath == files[image], select = ImageID))
 pixels$LabelName <- as.character(subset(train_annotations_object_segmentation, MaskPath == files[image], select = LabelName))
-pixels$class <- as.character(subset(classes_segmentation, ID == as.character(subset(train_annotations_object_segmentation, MaskPath == files[image], select = LabelName)), select = class))
+pixels$class <- as.character(subset(class_descriptions_boxable, ID == pixels$LabelName, select = class))
 
 result <- rbind(result, pixels)
 
@@ -330,10 +321,10 @@ names(rf_TP)[1] <- "Accuracy"
 #### Neural net
 ```{r}
 # Elements of confusion matrix
-TP <- nn_confusion_matrix[2,2]
-TN <- nn_confusion_matrix[1,1]
-FN <- nn_confusion_matrix[1,2]
-FP <- nn_confusion_matrix[2,1]
+TP <- nrow(subset(nn_results, Actual == 1 & Prediction == 1))
+TN <- nrow(subset(nn_results, Actual == 0 & Prediction == 0))
+FN <- nrow(subset(nn_results, Actual == 0 & Prediction == 1))
+FP <- nrow(subset(nn_results, Actual == 1 & Prediction == 0))
 # Calculate accuracy, precision, recall
 nn_accuracy <- (TP+TN)/sum(TP, TN, FN, FP)
 nn_precision <- (TP)/(TP+FP)
